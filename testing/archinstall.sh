@@ -1,15 +1,12 @@
 #!/bin/bash
+# This is a script meant to be used to install Arch from the live installation disk
+# You should read through it before using it, as it might not be appropriate for use
 
-#This is a lazy script I have for auto-installing Arch.
-#It's not officially part of LARBS, but I use it for testing.
-#DO NOT RUN THIS YOURSELF because Step 1 is it reformatting /dev/sda WITHOUT confirmation,
-#which means RIP in peace qq your data unless you've already backed up all of your drive.
-
+# is this needed for the live installation disk?
+# should still at least do something to ensure internet connection is active
 pacman -S --noconfirm dialog || { echo "Error at script start: Are you sure you're running this as the root user? Are you sure you have an internet connection?"; exit; }
 
-dialog --defaultno --title "DON'T BE A BRAINLET!" --yesno "This is an Arch install script that is very rough around the edges.\n\nOnly run this script if you're a big-brane who doesn't mind deleting your entire /dev/sda drive.\n\nThis script is only really for me so I can autoinstall Arch.\n\nt. Luke"  15 60 || exit
-
-dialog --defaultno --title "DON'T BE A BRAINLET!" --yesno "Do you think I'm meming? Only select yes to DELET your entire /dev/sda and reinstall Arch.\n\nTo stop this script, press no."  10 60 || exit
+dialog --defaultno --title "Simple Arch Installation" --yesno "This is an Arch install script that has been designed for my use.\nAs such, it may or may not work properly for you."  15 60 || exit
 
 dialog --no-cancel --inputbox "Enter a name for your computer." 10 60 2> comp
 
@@ -26,12 +23,12 @@ while true; do
 	pass2=$(dialog --no-cancel --passwordbox "Retype password." 10 60 3>&1 1>&2 2>&3 3>&1)
 done
 
+# why export? why not just use $pass1?
 export pass="$pass1"
 
-
-
+# figure out what this does
+# looks like it makes an array to use for creating partitions, but I have no idea how
 IFS=' ' read -ra SIZE <<< $(cat psize)
-
 re='^[0-9]+$'
 if ! [ ${#SIZE[@]} -eq 2 ] || ! [[ ${SIZE[0]} =~ $re ]] || ! [[ ${SIZE[1]} =~ $re ]] ; then
     SIZE=(12 25);
@@ -39,69 +36,79 @@ fi
 
 timedatectl set-ntp true
 
+# make the device a variable so it can work with devices other than sda
+# also need to change the filesystem type for part1 to 1 and part2 to 19 (just add in t\n1 and t\n19? (with actual newline))
+# change to gpt
+# does this still work if partitions already have signatures?
+# perhaps also add in option to not make part4 and add option for gpt and dos
 cat <<EOF | fdisk /dev/sda
-o
-n
+o	# create an empty dos table
+n	# part1 created (boot)
 p
-+200M
-n
++512M
+n	# part2 created (swap)
 p
 +${SIZE[0]}G
-n
+n	# part3 created (root)
 p
 +${SIZE[1]}G
-n
+n	# part4 created (home)
 p
-w
+w	# write changes to disk
 EOF
+# probably don't need this for fresh install
 partprobe
 
+# what does "yes" do?
+# devices need to change here, too
 yes | mkfs.ext4 /dev/sda4
 yes | mkfs.ext4 /dev/sda3
-yes | mkfs.ext4 /dev/sda1
+yes | mkfs.fat -F32 /dev/sda1
 mkswap /dev/sda2
 swapon /dev/sda2
 mount /dev/sda3 /mnt
-mkdir -p /mnt/boot
+mkdir /mnt/{boot,home}
 mount /dev/sda1 /mnt/boot
-mkdir -p /mnt/home
 mount /dev/sda4 /mnt/home
 
-
-pacstrap /mnt base base-devel
+# anything else needed?
+pacstrap /mnt base base-devel linux linux-firmware
 
 genfstab -U /mnt >> /mnt/etc/fstab
 cp tz.tmp /mnt/tzfinal.tmp
 rm tz.tmp
-curl https://raw.githubusercontent.com/LukeSmithxyz/LARBS/master/testing/chroot.sh > /mnt/chroot.sh && arch-chroot /mnt bash chroot.sh && rm /mnt/chroot.sh
 
 ### BEGIN
 arch-chroot /mnt echo "root:$pass" | chpasswd
 
+# can't I just skip making this variable?
 TZuser=$(cat tzfinal.tmp)
 
 ln -sf /usr/share/zoneinfo/$TZuser /etc/localtime
 
 hwclock --systohc
 
+echo "LANG=en_US.UTF-8" >> /etc/locale.conf
+# uncomment the proper line instead of adding an extra one
 echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
-echo "en_US ISO-8859-1" >> /etc/locale.gen
 locale-gen
 
+# why not do this with pacstrap earlier?
 pacman --noconfirm --needed -S networkmanager
 systemctl enable NetworkManager
 systemctl start NetworkManager
 
+# create option for systemd-boot or efiboot, or just replace grub altogether
 pacman --noconfirm --needed -S grub && grub-install --target=i386-pc /dev/sda && grub-mkconfig -o /boot/grub/grub.cfg
 
-pacman --noconfirm --needed -S dialog
-larbs() { curl -O https://raw.githubusercontent.com/LukeSmithxyz/LARBS/master/src/larbs.sh && bash larbs.sh ;}
-dialog --title "Install Luke's Rice" --yesno "This install script will easily let you access Luke's Auto-Rice Boostrapping Scripts (LARBS) which automatically install a full Arch Linux i3-gaps desktop environment.\n\nIf you'd like to install this, select yes, otherwise select no.\n\nLuke"  15 60 && larbs
-### END
+# commented out for now, but will add option to also install my dotfiles when they are done
+#pacman --noconfirm --needed -S dialog
+#larbs() { curl -O https://raw.githubusercontent.com/WillTroutman/LARBS/master/src/larbs.sh && bash larbs.sh ;}
+#dialog --title "Install Luke's Rice" --yesno "This install script will easily let you access Luke's Auto-Rice Boostrapping Scripts (LARBS) which automatically install a full Arch Linux i3-gaps desktop environment.\n\nIf you'd like to install this, select yes, otherwise select no.\n\nLuke"  15 60 && larbs
 
-
+# why mv and not cat?
+# need to edit /etc/hosts, too
 mv comp /mnt/etc/hostname
 
-dialog --defaultno --title "Final Qs" --yesno "Reboot computer?"  5 30 && reboot
-dialog --defaultno --title "Final Qs" --yesno "Return to chroot environment?"  6 30 && arch-chroot /mnt
-clear
+# add option to stay in arch-chroot?
+umount -R /mnt && reboot
